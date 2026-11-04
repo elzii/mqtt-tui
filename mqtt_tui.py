@@ -10,12 +10,18 @@ Provides an interactive Terminal User Interface for:
 
 import os
 import sys
+import csv
+import json
 import asyncio
 import datetime
 import shutil
+import subprocess
 from typing import List, Optional
 
+import prompt_toolkit.utils as pt_utils
 from prompt_toolkit.application import Application
+from prompt_toolkit.application.current import get_app
+from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
 from prompt_toolkit.layout.containers import (
@@ -27,12 +33,27 @@ from prompt_toolkit.layout.containers import (
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.layout.processors import Processor, Transformation
 from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.document import Document
 from prompt_toolkit.widgets import TextArea, Frame
 from prompt_toolkit.styles import Style
 from prompt_toolkit.mouse_events import MouseEventType
+
+
+# --- Patch emoji width for terminals like Kitty (fixing character offset desync) ---
+_orig_get_cwidth = pt_utils.get_cwidth
+
+def _emoji_aware_get_cwidth(string: str) -> int:
+    # Modern terminal emulators render SMP emoji symbols (>= 0x1F000) as 2 columns wide
+    if len(string) > 0 and ord(string[0]) >= 0x1F000:
+        return 2
+    return _orig_get_cwidth(string)
+
+pt_utils.get_cwidth = _emoji_aware_get_cwidth
+for _ch in ["🏗", "🏗️", "🎛", "🎛️", "🗑", "🗑️", "⚙️", "⚙"]:
+    pt_utils._CHAR_SIZES_CACHE[_ch] = 2
 
 
 # --- Config & Defaults ---
@@ -58,6 +79,10 @@ log_type notice
 log_type information
 """
 
+# History storage directory and CSV file
+HISTORY_DIR = os.path.expanduser("~/.config/mqtttui")
+HISTORY_FILE = os.path.join(HISTORY_DIR, "history.csv")
+
 
 def ensure_config_exists() -> str:
     """Ensure the config directory and config file exist, returning the path."""
@@ -66,6 +91,59 @@ def ensure_config_exists() -> str:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             f.write(DEFAULT_CONF_CONTENT)
     return CONFIG_PATH
+
+
+def ensure_history_file_exists() -> str:
+    """Ensure ~/.config/mqtttui/history.csv exists and is a valid file."""
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    if os.path.isdir(HISTORY_FILE):
+        try:
+            os.rmdir(HISTORY_FILE)
+        except Exception:
+            pass
+    if not os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "field", "value"])
+    return HISTORY_FILE
+
+
+class CsvFieldHistory(History):
+    """Stores and retrieves input history per field in ~/.config/mqtttui/history.csv."""
+    def __init__(self, field_name: str, csv_path: str = HISTORY_FILE):
+        super().__init__()
+        self.field_name = field_name
+        self.csv_path = csv_path
+        ensure_history_file_exists()
+
+    def load_history_strings(self):
+        if not os.path.exists(self.csv_path):
+            return
+        entries = []
+        try:
+            with open(self.csv_path, "r", newline="", encoding="utf-8", errors="replace") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                for row in reader:
+                    if len(row) >= 3 and row[1] == self.field_name:
+                        entries.append(row[2])
+        except Exception:
+            pass
+        # Yield in reverse order (most recent first) for prompt_toolkit
+        for item in reversed(entries):
+            yield item
+
+    def store_string(self, string: str) -> None:
+        if not string or not string.strip():
+            return
+        ensure_history_file_exists()
+        now = datetime.datetime.now().isoformat()
+        try:
+            with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([now, self.field_name, string])
+        except Exception:
+            pass
 
 
 # --- Styled Placeholder Processor ---
@@ -122,6 +200,9 @@ THEME_STYLE = Style.from_dict({
     "logs.status.stopped": "#ff4757 bold",
     "logs.body": "bg:#0a0c0f #dcdde1",
 
+    # Mouse text selection styling
+    "selected": "bg:#3d5afe #ffffff bold",
+
     # Bottom bar
     "bottom.bar": "bg:#14171d #8892b0",
     "bottom.key": "#54a0ff bold",
@@ -132,6 +213,7 @@ THEME_STYLE = Style.from_dict({
 class MqttTuiApp:
     def __init__(self):
         self.conf_path = ensure_config_exists()
+        ensure_history_file_exists()
         self.current_tab = "connect"  # "connect" | "subscribe" | "publish" | "config"
 
         # Background processes & monitoring tasks
@@ -157,6 +239,14 @@ class MqttTuiApp:
         )
 
     def _init_inputs(self):
+        # Setup Field History instances
+        self.hist_server_host = CsvFieldHistory("host")
+        self.hist_server_port = CsvFieldHistory("port")
+        self.hist_sub_topics = CsvFieldHistory("subscribe_topics")
+        self.hist_sub_port = CsvFieldHistory("subscribe_port")
+        self.hist_pub_topic = CsvFieldHistory("publish_topic")
+        self.hist_pub_msg = CsvFieldHistory("publish_message")
+
         # 1. Connect Tab Inputs
         host_placeholder = StyledPlaceholder([
             ("class:placeholder.title", "Host Address "),
@@ -165,6 +255,7 @@ class MqttTuiApp:
         self.server_host_input = TextArea(
             multiline=False,
             height=1,
+            history=self.hist_server_host,
             input_processors=[host_placeholder],
             style="class:input-text",
         )
@@ -176,6 +267,7 @@ class MqttTuiApp:
         self.server_port_input = TextArea(
             multiline=False,
             height=1,
+            history=self.hist_server_port,
             input_processors=[port_placeholder],
             style="class:input-text",
         )
@@ -188,6 +280,7 @@ class MqttTuiApp:
         self.sub_topics_input = TextArea(
             multiline=False,
             height=1,
+            history=self.hist_sub_topics,
             input_processors=[sub_topics_placeholder],
             style="class:input-text",
         )
@@ -199,6 +292,7 @@ class MqttTuiApp:
         self.sub_port_input = TextArea(
             multiline=False,
             height=1,
+            history=self.hist_sub_port,
             input_processors=[sub_port_placeholder],
             style="class:input-text",
         )
@@ -211,6 +305,7 @@ class MqttTuiApp:
         self.pub_topic_input = TextArea(
             multiline=False,
             height=1,
+            history=self.hist_pub_topic,
             input_processors=[pub_topic_placeholder],
             style="class:input-text",
         )
@@ -222,6 +317,7 @@ class MqttTuiApp:
         self.pub_msg_input = TextArea(
             multiline=True,
             height=Dimension(min=4, preferred=7, max=12),
+            history=self.hist_pub_msg,
             input_processors=[pub_msg_placeholder],
             style="class:input-text",
             wrap_lines=True,
@@ -244,17 +340,46 @@ class MqttTuiApp:
             style="class:input-text",
         )
 
+        # Register single-line inputs that support Up/Down history navigation
+        self.history_buffers = [
+            self.server_host_input.buffer,
+            self.server_port_input.buffer,
+            self.sub_topics_input.buffer,
+            self.sub_port_input.buffer,
+            self.pub_topic_input.buffer,
+        ]
+
+    def _make_logs_selectable(self, text_area: TextArea):
+        """Enable mouse focus and text selection for read-only log buffers."""
+        orig_handler = text_area.control.mouse_handler
+
+        def _custom_mouse_handler(mouse_event):
+            app = get_app()
+            # On mouse down, ensure buffer is focused so drag-to-select immediately works
+            if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                if app.layout.current_control != text_area.control:
+                    app.layout.current_control = text_area.control
+            return orig_handler(mouse_event)
+
+        text_area.control.mouse_handler = _custom_mouse_handler
+
     def _init_logs(self):
-        # Dedicated scrollable text area for each tab's logs
-        self.server_logs = TextArea(read_only=True, scrollbar=True, style="class:logs.body")
-        self.sub_logs = TextArea(read_only=True, scrollbar=True, style="class:logs.body")
-        self.pub_logs = TextArea(read_only=True, scrollbar=True, style="class:logs.body")
+        # Dedicated scrollable text area for each tab's logs (focus_on_click=True for mouse selection)
+        self.server_logs = TextArea(read_only=True, scrollbar=True, focus_on_click=True, style="class:logs.body")
+        self.sub_logs = TextArea(read_only=True, scrollbar=True, focus_on_click=True, style="class:logs.body")
+        self.pub_logs = TextArea(read_only=True, scrollbar=True, focus_on_click=True, style="class:logs.body")
         self.config_logs = TextArea(
             read_only=True,
             scrollbar=True,
+            focus_on_click=True,
             style="class:logs.body",
             height=Dimension(min=5, preferred=7, max=10)
         )
+
+        # Make all log text areas selectable and remove ^ and v scrollbar arrows (leave clean bar)
+        for ta in [self.server_logs, self.sub_logs, self.pub_logs, self.config_logs, self.config_editor]:
+            self._make_logs_selectable(ta)
+            ta.window.right_margins = [ScrollbarMargin(display_arrows=False)]
 
         # Append welcoming info to server logs
         self.append_log(self.server_logs, "Mosquitto TUI initialized. Ready to connect or start broker.")
@@ -283,6 +408,88 @@ class MqttTuiApp:
             Document("", cursor_position=0),
             bypass_readonly=True
         )
+
+    def action_beautify_json(self, text_area: TextArea):
+        """Turn compact JSON payloads in the log buffer into indented multiline JSON."""
+        raw_text = text_area.buffer.text
+        if not raw_text.strip():
+            return
+
+        lines = raw_text.split("\n")
+        new_lines = []
+        modified = False
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                new_lines.append(line)
+                continue
+
+            prefix = ""
+            json_candidate = ""
+
+            # Check if line has a timestamp header e.g. [11:34:50]
+            if line.startswith("[") and "]" in line:
+                cb = line.find("]")
+                inside = line[1:cb]
+                if inside.count(":") >= 1:
+                    prefix = line[:cb + 1].strip()
+                    rem = line[cb + 1:].strip()
+                    fb = rem.find("{")
+                    if fb != -1:
+                        topic_part = rem[:fb].strip()
+                        if topic_part:
+                            prefix = f"{prefix} {topic_part}"
+                        json_candidate = rem[fb:].strip()
+                    else:
+                        json_candidate = rem
+
+            if not json_candidate:
+                fb = line.find("{")
+                if fb != -1:
+                    prefix = line[:fb].strip()
+                    json_candidate = line[fb:].strip()
+
+            if json_candidate:
+                try:
+                    parsed = json.loads(json_candidate)
+                    pretty = json.dumps(parsed, indent=2)
+                    if prefix:
+                        new_lines.append(prefix)
+                    new_lines.extend(pretty.split("\n"))
+                    modified = True
+                    continue
+                except Exception:
+                    pass
+
+            new_lines.append(line)
+
+        if modified:
+            new_text = "\n".join(new_lines)
+            text_area.buffer.set_document(
+                Document(new_text, cursor_position=len(new_text)),
+                bypass_readonly=True
+            )
+            if hasattr(self, "app"):
+                self.app.invalidate()
+
+    def save_field_history(self, field_name: str, value: str):
+        """Save a submitted value to CSV history."""
+        if not value or not value.strip():
+            return
+        val = value.strip()
+        if field_name == "host":
+            self.hist_server_host.append_string(val)
+        elif field_name == "port":
+            self.hist_server_port.append_string(val)
+        elif field_name == "subscribe_topics":
+            self.hist_sub_topics.append_string(val)
+        elif field_name == "subscribe_port":
+            self.hist_sub_port.append_string(val)
+        elif field_name == "publish_topic":
+            self.hist_pub_topic.append_string(val)
+        elif field_name == "publish_message":
+            self.hist_pub_msg.append_string(val)
 
     # --- Click & Navigation Handlers ---
     def switch_tab(self, tab_name: str):
@@ -412,6 +619,7 @@ class MqttTuiApp:
         # Logs Header Bar
         def get_sub_log_header():
             h_sub = self._make_mouse_click_handler(self.action_toggle_subscribe)
+            h_beautify = self._make_mouse_click_handler(lambda: self.action_beautify_json(self.sub_logs))
             h_clear = self._make_mouse_click_handler(lambda: self.clear_log(self.sub_logs))
 
             status_text = "● Subscribing (Active)" if self.sub_proc else "● Inactive"
@@ -424,6 +632,8 @@ class MqttTuiApp:
                 (status_cls, status_text),
                 ("class:logs.header", "   "),
                 ("class:btn.badge", f" {btn_text} ", h_sub),
+                ("class:logs.header", "  "),
+                ("class:btn.badge", " 💋 Beautify JSON ", h_beautify),
                 ("class:logs.header", "  "),
                 ("class:btn.badge", " 🧹 Clear ", h_clear),
             ]
@@ -463,6 +673,7 @@ class MqttTuiApp:
         def get_pub_log_header():
             h_pub = self._make_mouse_click_handler(self.action_publish_message)
             h_clear_msg = self._make_mouse_click_handler(lambda: self.pub_msg_input.buffer.reset())
+            h_beautify = self._make_mouse_click_handler(lambda: self.action_beautify_json(self.pub_logs))
             h_clear_logs = self._make_mouse_click_handler(lambda: self.clear_log(self.pub_logs))
 
             return [
@@ -471,6 +682,8 @@ class MqttTuiApp:
                 ("class:btn.badge", " 🚀 Publish ", h_pub),
                 ("class:logs.header", "  "),
                 ("class:btn.badge", " 🗑️ Clear Message ", h_clear_msg),
+                ("class:logs.header", "  "),
+                ("class:btn.badge", " 💋 Beautify JSON ", h_beautify),
                 ("class:logs.header", "  "),
                 ("class:btn.badge", " 🧹 Clear Logs ", h_clear_logs),
             ]
@@ -600,6 +813,13 @@ class MqttTuiApp:
     # --- Actions: Server / Connect ---
     def action_toggle_broker(self):
         """Start or stop the mosquitto broker."""
+        host_val = self.server_host_input.text.strip()
+        port_val = self.server_port_input.text.strip()
+        if host_val:
+            self.save_field_history("host", host_val)
+        if port_val:
+            self.save_field_history("port", port_val)
+
         if self.server_proc:
             # Stop broker
             self.append_log(self.server_logs, f"Stopping Mosquitto broker (PID {self.server_proc.pid})...")
@@ -613,7 +833,6 @@ class MqttTuiApp:
             self.app.invalidate()
         else:
             # Start broker
-            port_val = self.server_port_input.text.strip()
             if not port_val or port_val.startswith("1883|9001"):
                 port_val = "1883"
 
@@ -658,6 +877,9 @@ class MqttTuiApp:
         """Test connection to the configured host and port, and query broker details."""
         host = self.server_host_input.text.strip() or "127.0.0.1"
         port_raw = self.server_port_input.text.strip() or "1883"
+        self.save_field_history("host", host)
+        self.save_field_history("port", port_raw)
+
         port = 1883
         if port_raw and not port_raw.startswith("1883|9001"):
             try:
@@ -700,6 +922,13 @@ class MqttTuiApp:
     # --- Actions: Subscribe ---
     def action_toggle_subscribe(self):
         """Start or stop mosquitto_sub."""
+        topics_val = self.sub_topics_input.text.strip()
+        port_val = self.sub_port_input.text.strip()
+        if topics_val:
+            self.save_field_history("subscribe_topics", topics_val)
+        if port_val:
+            self.save_field_history("subscribe_port", port_val)
+
         if self.sub_proc:
             self.append_log(self.sub_logs, f"Stopping subscription (PID {self.sub_proc.pid})...")
             try:
@@ -712,7 +941,7 @@ class MqttTuiApp:
             self.app.invalidate()
         else:
             host = self.server_host_input.text.strip() or "127.0.0.1"
-            port_raw = self.sub_port_input.text.strip() or self.server_port_input.text.strip() or "1883"
+            port_raw = port_val or self.server_port_input.text.strip() or "1883"
             port = "1883"
             if port_raw and not port_raw.startswith("1883|9001"):
                 port = port_raw.split("|")[0].strip()
@@ -775,14 +1004,19 @@ class MqttTuiApp:
             port = port_raw.split("|")[0].strip()
 
         topic_raw = self.pub_topic_input.text.strip()
+        message = self.pub_msg_input.text
+
+        if topic_raw:
+            self.save_field_history("publish_topic", topic_raw)
+        if message:
+            self.save_field_history("publish_message", message)
+
         if not topic_raw or topic_raw == "#":
-            # MQTT spec prohibits wildcard '#' for publishing
             topics = ["test/tui"]
             self.append_log(self.pub_logs, "Notice: '#' is a wildcard topic. Defaulting publish to 'test/tui'.")
         else:
             topics = [t.strip() for t in topic_raw.split(",") if t.strip()]
 
-        message = self.pub_msg_input.text
         if not message:
             self.append_log(self.pub_logs, "Warning: Empty payload. Publishing empty message.")
 
@@ -866,21 +1100,26 @@ class MqttTuiApp:
     def _init_keybindings(self):
         self.kb = KeyBindings()
 
-        # Quit
-        @self.kb.add("c-q")
+        # Quit or Copy selection on Ctrl+C
         @self.kb.add("c-c")
+        def _ctrl_c(event):
+            buf = event.app.current_buffer
+            if buf.selection_state:
+                from_idx, to_idx = buf.document.selection_range()
+                selected_text = buf.text[from_idx:to_idx]
+                try:
+                    subprocess.run(["pbcopy"], input=selected_text.encode("utf-8"), timeout=1)
+                except Exception:
+                    pass
+                buf.exit_selection()
+                event.app.invalidate()
+            else:
+                self._terminate_subprocesses()
+                event.app.exit()
+
+        @self.kb.add("c-q")
         def _quit(event):
-            # Clean up child processes
-            if self.server_proc:
-                try:
-                    self.server_proc.terminate()
-                except Exception:
-                    pass
-            if self.sub_proc:
-                try:
-                    self.sub_proc.terminate()
-                except Exception:
-                    pass
+            self._terminate_subprocesses()
             event.app.exit()
 
         # Switch tabs via F1-F4 or Alt+1..4
@@ -907,6 +1146,23 @@ class MqttTuiApp:
         # Tab navigation between inputs
         self.kb.add("tab")(focus_next)
         self.kb.add("s-tab")(focus_previous)
+
+        # Single-line input history navigation (Up / Down)
+        @self.kb.add("up")
+        def _history_back(event):
+            buf = event.app.current_buffer
+            if buf in self.history_buffers:
+                buf.history_backward()
+            else:
+                focus_previous(event)
+
+        @self.kb.add("down")
+        def _history_forward(event):
+            buf = event.app.current_buffer
+            if buf in self.history_buffers:
+                buf.history_forward()
+            else:
+                focus_next(event)
 
         # Clear current tab logs
         @self.kb.add("c-l")
@@ -954,11 +1210,20 @@ class MqttTuiApp:
         @self.kb.add("enter")
         def _enter_key(event):
             buf = event.app.current_buffer
-            if buf == self.server_port_input.buffer:
+            if buf == self.server_host_input.buffer:
+                self.save_field_history("host", self.server_host_input.text)
+                focus_next(event)
+            elif buf == self.server_port_input.buffer:
+                self.save_field_history("port", self.server_port_input.text)
                 self.action_toggle_broker()
+            elif buf == self.sub_topics_input.buffer:
+                self.save_field_history("subscribe_topics", self.sub_topics_input.text)
+                focus_next(event)
             elif buf == self.sub_port_input.buffer:
+                self.save_field_history("subscribe_port", self.sub_port_input.text)
                 self.action_toggle_subscribe()
             elif buf == self.pub_topic_input.buffer:
+                self.save_field_history("publish_topic", self.pub_topic_input.text)
                 event.app.layout.focus(self.pub_msg_input)
             elif buf == self.pub_msg_input.buffer:
                 buf.insert_text("\n")
@@ -966,6 +1231,19 @@ class MqttTuiApp:
                 buf.insert_text("\n")
             else:
                 focus_next(event)
+
+    def _terminate_subprocesses(self):
+        """Cleanly terminate child processes."""
+        if self.server_proc:
+            try:
+                self.server_proc.terminate()
+            except Exception:
+                pass
+        if self.sub_proc:
+            try:
+                self.sub_proc.terminate()
+            except Exception:
+                pass
 
     def run(self):
         """Start the TUI Application."""
