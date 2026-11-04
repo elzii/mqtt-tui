@@ -2,3 +2,6 @@
 __docs__
 __pycache__/
 *.pyc
+cpp/build/
+golang/mqtt-tui
+
