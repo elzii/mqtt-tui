@@ -74,6 +74,7 @@ int main() {
 
     // Config Tab content
     std::string config_val = "";
+    Component inp_config;
     {
         std::ifstream cfg_in(mqtt_tui::get_config_file_path());
         if (cfg_in.is_open()) {
@@ -90,19 +91,18 @@ int main() {
     std::vector<std::string> log_lines = {
         "[" + get_current_time_str() + "] Mosquitto TUI initialized (C++20 / FTXUI). Ready."
     };
-    int log_scroll = 0;
+    int log_scroll_line = -1; // -1 means auto-scroll to the bottom!
 
     auto append_log = [&](const std::string& msg) {
         std::lock_guard<std::mutex> lock(log_mutex);
         log_lines.push_back(msg);
-        log_scroll = (int)log_lines.size();
         screen.PostEvent(Event::Custom);
     };
 
     auto clear_logs = [&]() {
         std::lock_guard<std::mutex> lock(log_mutex);
         log_lines.clear();
-        log_scroll = 0;
+        log_scroll_line = -1;
         screen.PostEvent(Event::Custom);
     };
 
@@ -120,7 +120,7 @@ int main() {
             if (!bline.empty() && bline.back() == '\r') bline.pop_back();
             log_lines.push_back(bline);
         }
-        log_scroll = (int)log_lines.size();
+        log_scroll_line = -1;
         screen.PostEvent(Event::Custom);
     };
 
@@ -150,31 +150,60 @@ int main() {
     };
 
     // Helper: Tab button options (matching rounded border & height 3)
-    auto make_tab_btn = [&](const std::string& label, int tab_id, Color active_col) {
+    auto make_tab_btn = [&](const std::string& label, int tab_id, Color active_col, std::function<void()> on_select = nullptr) {
         ButtonOption opt;
         opt.transform = [&, label, tab_id, active_col](const EntryState& s) {
             bool is_active = (active_tab == tab_id);
             auto elem = text(" " + label + " ");
             if (is_active) {
-                return elem | bold | color(Color::Black) | bgcolor(active_col) | borderRounded | color(active_col);
+                return elem | bold | color(Color::Black) | borderRounded | bgcolor(active_col) | color(Color::Black);
             }
             if (s.focused) {
                 return elem | bold | color(active_col) | borderRounded | color(active_col);
             }
             return elem | color(Color::RGB(160, 160, 160)) | borderRounded | color(Color::RGB(80, 80, 80));
         };
-        return Button(label, [&, tab_id] { active_tab = tab_id; }, opt);
+        return Button(label, [&, tab_id, on_select] {
+            active_tab = tab_id;
+            if (on_select) on_select();
+        }, opt);
     };
 
-    auto tab_connect_btn = make_tab_btn("Connect", 0, Color::RGB(46, 213, 115));
-    auto tab_sub_btn = make_tab_btn("Subscribe", 1, Color::RGB(84, 160, 255));
-    auto tab_pub_btn = make_tab_btn("Publish", 2, Color::RGB(224, 86, 253));
-    auto tab_cfg_btn = make_tab_btn("🎛️", 3, Color::RGB(255, 165, 2));
+    auto tab_connect_btn = make_tab_btn("Connect", 0, Color::RGB(46, 213, 115), [&]{
+        if (raw_inp_host) raw_inp_host->TakeFocus();
+    });
+    auto tab_sub_btn = make_tab_btn("Subscribe", 1, Color::RGB(84, 160, 255), [&]{
+        if (raw_inp_sub_topics) raw_inp_sub_topics->TakeFocus();
+    });
+    auto tab_pub_btn = make_tab_btn("Publish", 2, Color::RGB(224, 86, 253), [&]{
+        if (raw_inp_pub_topic) raw_inp_pub_topic->TakeFocus();
+    });
+    auto tab_cfg_btn = make_tab_btn("🎛️", 3, Color::RGB(255, 165, 2), [&]{
+        if (inp_config) inp_config->TakeFocus();
+    });
+
+    // Hover state tracking for input borders
+    bool hover_host = false;
+    bool hover_port = false;
+    bool hover_sub_topics = false;
+    bool hover_sub_port = false;
+    bool hover_pub_topic = false;
+    bool hover_pub_msg = false;
+    bool hover_cfg = false;
 
     // Inputs with history handler decorator
-    auto make_history_input = [&](std::string& val_ref, const std::string& placeholder, const std::string& field_name, int& hist_idx, Component& raw_out) {
+    auto make_history_input = [&](std::string& val_ref, const std::string& placeholder, const std::string& field_name, int& hist_idx, Component& raw_out, bool& hover_ref) {
         InputOption opt;
         opt.placeholder = placeholder;
+        opt.transform = [&hover_ref](InputState state) {
+            hover_ref = state.hovered;
+            if (state.is_placeholder) {
+                state.element |= color(Color::RGB(120, 120, 120));
+            } else {
+                state.element |= color(Color::RGB(230, 230, 230));
+            }
+            return state.element;
+        };
         auto inp = Input(&val_ref, opt);
         raw_out = inp;
         return CatchEvent(inp, [&, field_name](Event event) {
@@ -207,8 +236,8 @@ int main() {
     };
 
     // Connect Tab components
-    auto inp_host = make_history_input(host_val, "Host Address (DEFAULT = 127.0.0.1)", "host", host_hist_idx, raw_inp_host);
-    auto inp_port = make_history_input(port_val, "Port (DEFAULT = 1883|9001)", "port", port_hist_idx, raw_inp_port);
+    auto inp_host = make_history_input(host_val, "Host Address (DEFAULT = 127.0.0.1)", "host", host_hist_idx, raw_inp_host, hover_host);
+    auto inp_port = make_history_input(port_val, "Port (DEFAULT = 1883|9001)", "port", port_hist_idx, raw_inp_port, hover_port);
 
     auto btn_start_broker = Button("▶ Start Mosquitto", [&] {
         if (broker_pid != -1) {
@@ -318,8 +347,8 @@ int main() {
     auto btn_connect_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
 
     // Subscribe Tab components
-    auto inp_sub_topics = make_history_input(sub_topics_val, "Topics (Comma Separated, DEFAULT = #)", "sub_topics", sub_topics_hist_idx, raw_inp_sub_topics);
-    auto inp_sub_port = make_history_input(sub_port_val, "Port (DEFAULT = 1883|9001)", "sub_port", sub_port_hist_idx, raw_inp_sub_port);
+    auto inp_sub_topics = make_history_input(sub_topics_val, "Topics (Comma Separated, DEFAULT = #)", "sub_topics", sub_topics_hist_idx, raw_inp_sub_topics, hover_sub_topics);
+    auto inp_sub_port = make_history_input(sub_port_val, "Port (DEFAULT = 1883|9001)", "sub_port", sub_port_hist_idx, raw_inp_sub_port, hover_sub_port);
 
     auto start_subscriber_func = [&] {
         if (sub_pid != -1) {
@@ -447,8 +476,8 @@ int main() {
     auto btn_sub_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
 
     // Publish Tab components
-    auto inp_pub_topic = make_history_input(pub_topic_val, "Topic (DEFAULT = test/topic)", "pub_topic", pub_topic_hist_idx, raw_inp_pub_topic);
-    auto inp_pub_msg = make_history_input(pub_msg_val, "Message", "pub_message", pub_msg_hist_idx, raw_inp_pub_msg);
+    auto inp_pub_topic = make_history_input(pub_topic_val, "Topic (DEFAULT = test/topic)", "pub_topic", pub_topic_hist_idx, raw_inp_pub_topic, hover_pub_topic);
+    auto inp_pub_msg = make_history_input(pub_msg_val, "Message", "pub_message", pub_msg_hist_idx, raw_inp_pub_msg, hover_pub_msg);
 
     auto btn_publish = Button("🚀 Publish Now", [&] {
         std::string t = pub_topic_val.empty() ? "test/topic" : pub_topic_val;
@@ -476,7 +505,12 @@ int main() {
     // Config Tab components
     InputOption cfg_opt;
     cfg_opt.multiline = true;
-    auto inp_config = Input(&config_val, cfg_opt);
+    cfg_opt.transform = [&](InputState state) {
+        hover_cfg = state.hovered;
+        state.element |= color(Color::RGB(230, 230, 230));
+        return state.element;
+    };
+    inp_config = Input(&config_val, cfg_opt);
 
     auto btn_save_cfg = Button("💾 Save Config", [&] {
         std::ofstream cfg_out(mqtt_tui::get_config_file_path());
@@ -601,20 +635,123 @@ int main() {
             chain[prev_idx]->TakeFocus();
             return true;
         }
-        if (event == Event::F1 || event == Event::Special("\x1bOP") || event == Event::Special("\x1b[11~") || event == Event::Special("\0331")) {
+        // Mouse wheel scrolling
+        if (event.is_mouse()) {
+            if (event.mouse().button == Mouse::WheelUp) {
+                if (active_tab == 3 && inp_config && event.mouse().y < screen.dimy() - 7) {
+                    for (int k = 0; k < 3; ++k) inp_config->OnEvent(Event::ArrowUp);
+                    return true;
+                }
+                std::lock_guard<std::mutex> lock(log_mutex);
+                int total = (int)log_lines.size();
+                if (total > 0) {
+                    if (log_scroll_line == -1) {
+                        log_scroll_line = std::max(0, total - 4);
+                    } else {
+                        log_scroll_line = std::max(0, log_scroll_line - 3);
+                    }
+                    return true;
+                }
+            }
+            if (event.mouse().button == Mouse::WheelDown) {
+                if (active_tab == 3 && inp_config && event.mouse().y < screen.dimy() - 7) {
+                    for (int k = 0; k < 3; ++k) inp_config->OnEvent(Event::ArrowDown);
+                    return true;
+                }
+                std::lock_guard<std::mutex> lock(log_mutex);
+                int total = (int)log_lines.size();
+                if (total > 0 && log_scroll_line != -1) {
+                    log_scroll_line += 3;
+                    if (log_scroll_line >= total - 1) {
+                        log_scroll_line = -1; // resume auto-scroll at bottom
+                    }
+                    return true;
+                }
+            }
+        }
+        // Keyboard scrolling
+        if (active_tab == 3 && inp_config && inp_config->Focused()) {
+            if (event == Event::PageUp) {
+                for (int k = 0; k < 15; ++k) inp_config->OnEvent(Event::ArrowUp);
+                return true;
+            }
+            if (event == Event::PageDown) {
+                for (int k = 0; k < 15; ++k) inp_config->OnEvent(Event::ArrowDown);
+                return true;
+            }
+            if (event == Event::Home || event == Event::End) {
+                return false; // let inp_config handle Home and End
+            }
+        } else {
+            if (event == Event::PageUp) {
+                std::lock_guard<std::mutex> lock(log_mutex);
+                int total = (int)log_lines.size();
+                if (total > 0) {
+                    if (log_scroll_line == -1) {
+                        log_scroll_line = std::max(0, total - 15);
+                    } else {
+                        log_scroll_line = std::max(0, log_scroll_line - 15);
+                    }
+                    return true;
+                }
+            }
+            if (event == Event::PageDown) {
+                std::lock_guard<std::mutex> lock(log_mutex);
+                int total = (int)log_lines.size();
+                if (total > 0 && log_scroll_line != -1) {
+                    log_scroll_line += 15;
+                    if (log_scroll_line >= total - 1) {
+                        log_scroll_line = -1; // resume auto-scroll
+                    }
+                    return true;
+                }
+            }
+            if (event == Event::Home) {
+                std::lock_guard<std::mutex> lock(log_mutex);
+                if (!log_lines.empty()) {
+                    log_scroll_line = 0;
+                    return true;
+                }
+            }
+            if (event == Event::End) {
+                log_scroll_line = -1;
+                return true;
+            }
+        }
+        if (event == Event::Special({13}) || event == Event::Character('\r') ||
+            event == Event::F5 || event == Event::Special("\x1b[15~")) {
+            return main_container->OnEvent(Event::Return);
+        }
+        bool in_input = (inp_config && inp_config->Focused()) ||
+                        (raw_inp_host && raw_inp_host->Focused()) ||
+                        (raw_inp_port && raw_inp_port->Focused()) ||
+                        (raw_inp_sub_topics && raw_inp_sub_topics->Focused()) ||
+                        (raw_inp_sub_port && raw_inp_sub_port->Focused()) ||
+                        (raw_inp_pub_topic && raw_inp_pub_topic->Focused()) ||
+                        (raw_inp_pub_msg && raw_inp_pub_msg->Focused());
+
+        if (event == Event::F1 || event == Event::Special("\x1bOP") || event == Event::Special("\x1b[11~") || event == Event::Special("\0331") ||
+            (!in_input && event == Event::Character('1'))) {
             active_tab = 0;
+            if (raw_inp_host) raw_inp_host->TakeFocus();
             return true;
         }
-        if (event == Event::F2 || event == Event::Special("\x1bOQ") || event == Event::Special("\x1b[12~") || event == Event::Special("\0332")) {
+        if (event == Event::F2 || event == Event::Special("\x1bOQ") || event == Event::Special("\x1b[12~") || event == Event::Special("\0332") ||
+            (!in_input && event == Event::Character('2'))) {
             active_tab = 1;
+            if (raw_inp_sub_topics) raw_inp_sub_topics->TakeFocus();
             return true;
         }
-        if (event == Event::F3 || event == Event::Special("\x1bOR") || event == Event::Special("\x1b[13~") || event == Event::Special("\0333")) {
+        if (event == Event::F3 || event == Event::Special("\x1bOR") || event == Event::Special("\x1b[13~") || event == Event::Special("\0333") ||
+            (!in_input && event == Event::Character('3'))) {
             active_tab = 2;
+            if (raw_inp_pub_topic) raw_inp_pub_topic->TakeFocus();
             return true;
         }
-        if (event == Event::F4 || event == Event::Special("\x1bOS") || event == Event::Special("\x1b[14~") || event == Event::Special("\0334")) {
+        if (event == Event::F4 || event == Event::Special("\x1bOS") || event == Event::Special("\x1b[14~") || event == Event::Special("\0334") ||
+            (!in_input && event == Event::Character('4'))) {
             active_tab = 3;
+            if (inp_config) inp_config->TakeFocus();
             return true;
         }
         if (event == Event::Special({17})) { // Ctrl+Q
@@ -632,12 +769,18 @@ int main() {
     auto renderer = Renderer(root_component, [&] {
         // Top Header
         auto header = hbox({
-            text(" 🦟 MQTT : ") | color(Color::RGB(255, 177, 66)) | bold,
-            text("Server ") | color(Color::RGB(46, 213, 115)) | bold,
-            text("| ") | color(Color::RGB(100, 100, 100)),
-            text("Subscribe ") | color(Color::RGB(84, 160, 255)) | bold,
-            text("| ") | color(Color::RGB(100, 100, 100)),
-            text("Publish   ") | color(Color::RGB(224, 86, 253)) | bold,
+            vbox({
+                text(" "),
+                hbox({
+                    text(" 🦟 MQTT : ") | color(Color::RGB(255, 177, 66)) | bold,
+                    text("Server ") | color(Color::RGB(46, 213, 115)) | bold,
+                    text("| ") | color(Color::RGB(100, 100, 100)),
+                    text("Subscribe ") | color(Color::RGB(84, 160, 255)) | bold,
+                    text("| ") | color(Color::RGB(100, 100, 100)),
+                    text("Publish   ") | color(Color::RGB(224, 86, 253)) | bold,
+                }),
+                text(" ")
+            }),
             filler(),
             tab_connect_btn->Render(),
             separatorEmpty(),
@@ -649,55 +792,65 @@ int main() {
             text(" ")
         });
 
+        // Helper to produce a clean, perfectly aligned labeled input row with dynamic border brightness
+        auto make_labeled_box = [](const std::string& icon, Component input_comp, bool is_hovered, int h = 0) {
+            Color border_col;
+            if (input_comp->Focused()) {
+                border_col = Color::RGB(255, 255, 255); // 100% white when active
+            } else if (is_hovered) {
+                border_col = Color::RGB(153, 153, 153); // 60% white when hovered
+            } else {
+                border_col = Color::RGB(102, 102, 102); // 40% white when normal
+            }
+
+            Element left_col;
+            if (h > 0) {
+                left_col = vbox({
+                    text(" "),
+                    text("  " + icon + "  ") | bold,
+                    filler()
+                }) | size(WIDTH, EQUAL, 6);
+                return hbox({
+                    left_col,
+                    input_comp->Render() | borderRounded | color(border_col) | size(HEIGHT, EQUAL, h) | flex
+                });
+            } else if (h < 0) {
+                left_col = vbox({
+                    text(" "),
+                    text("  " + icon + "  ") | bold,
+                    filler()
+                }) | size(WIDTH, EQUAL, 6);
+                return hbox({
+                    left_col,
+                    input_comp->Render() | borderRounded | color(border_col) | flex
+                }) | flex;
+            } else {
+                left_col = vbox({
+                    text(" "),
+                    text("  " + icon + "  ") | bold,
+                    text(" ")
+                }) | size(WIDTH, EQUAL, 6);
+                return hbox({
+                    left_col,
+                    input_comp->Render() | borderRounded | color(border_col) | flex
+                });
+            }
+        };
+
         // Tab Content
         Elements tab_elements;
         if (active_tab == 0) {
-            tab_elements.push_back(
-                hbox({
-                    text("  🔗  ") | bold,
-                    inp_host->Render() | border | flex
-                })
-            );
-            tab_elements.push_back(
-                hbox({
-                    text("  🏗️  ") | bold,
-                    inp_port->Render() | border | flex
-                })
-            );
+            tab_elements.push_back(make_labeled_box("🔗", inp_host, hover_host));
+            tab_elements.push_back(make_labeled_box("🏗️", inp_port, hover_port));
         } else if (active_tab == 1) {
-            tab_elements.push_back(
-                hbox({
-                    text("  💬  ") | bold,
-                    inp_sub_topics->Render() | border | flex
-                })
-            );
-            tab_elements.push_back(
-                hbox({
-                    text("  🏗️  ") | bold,
-                    inp_sub_port->Render() | border | flex
-                })
-            );
+            tab_elements.push_back(make_labeled_box("💬", inp_sub_topics, hover_sub_topics));
+            tab_elements.push_back(make_labeled_box("🏗️", inp_sub_port, hover_sub_port));
         } else if (active_tab == 2) {
-            tab_elements.push_back(
-                hbox({
-                    text("  💬  ") | bold,
-                    inp_pub_topic->Render() | border | flex
-                })
-            );
-            tab_elements.push_back(
-                hbox({
-                    text("  💬  ") | bold,
-                    inp_pub_msg->Render() | border | size(HEIGHT, EQUAL, 5) | flex
-                })
-            );
+            tab_elements.push_back(make_labeled_box("💬", inp_pub_topic, hover_pub_topic));
+            tab_elements.push_back(make_labeled_box("💬", inp_pub_msg, hover_pub_msg, 5));
         } else if (active_tab == 3) {
             // In Config tab, config editor expands (flex) to fill available space
-            tab_elements.push_back(
-                hbox({
-                    text("  🎛️  ") | bold,
-                    inp_config->Render() | border | flex
-                })
-            );
+            tab_elements.push_back(make_labeled_box("🎛️", inp_config, hover_cfg, -1));
         }
 
         // Logs Header Bar
@@ -764,30 +917,34 @@ int main() {
             text(" ")
         }) | bgcolor(Color::RGB(55, 55, 55));
 
-        // Logs Content area
+        // Logs Content area with auto-scrolling & interactive scroll support
         Elements rendered_lines;
         {
             std::lock_guard<std::mutex> lock(log_mutex);
-            int max_visible = (active_tab == 3) ? 10 : 80;
-            int start_idx = 0;
-            if ((int)log_lines.size() > max_visible) {
-                start_idx = (int)log_lines.size() - max_visible;
+            if (log_lines.empty()) {
+                rendered_lines.push_back(text("(no logs yet)") | dim);
+            } else {
+                int target_focus = log_scroll_line;
+                if (target_focus == -1 || target_focus >= (int)log_lines.size()) {
+                    target_focus = (int)log_lines.size() - 1;
+                }
+                for (int i = 0; i < (int)log_lines.size(); ++i) {
+                    if (i == target_focus) {
+                        rendered_lines.push_back(text(log_lines[i]) | focus);
+                    } else {
+                        rendered_lines.push_back(text(log_lines[i]));
+                    }
+                }
             }
-            for (size_t i = start_idx; i < log_lines.size(); ++i) {
-                rendered_lines.push_back(text(log_lines[i]));
-            }
-        }
-        if (rendered_lines.empty()) {
-            rendered_lines.push_back(text("(no logs yet)") | dim);
         }
 
         Element logs_box;
         if (active_tab == 3) {
             // In Config tab, log panel is much smaller (fixed height 5) at bottom!
-            logs_box = vbox(std::move(rendered_lines)) | frame | size(HEIGHT, EQUAL, 5) | border;
+            logs_box = vbox(std::move(rendered_lines)) | vscroll_indicator | yframe | size(HEIGHT, EQUAL, 5) | borderRounded | color(Color::RGB(102, 102, 102));
         } else {
-            // In other tabs, logs box fills the remaining space
-            logs_box = vbox(std::move(rendered_lines)) | frame | flex | border;
+            // In other tabs, logs box fills the remaining space with smooth scroll indicator
+            logs_box = vbox(std::move(rendered_lines)) | vscroll_indicator | yframe | flex | borderRounded | color(Color::RGB(102, 102, 102));
         }
 
         // Bottom status footer
@@ -812,6 +969,10 @@ int main() {
             footer
         });
     });
+
+    if (raw_inp_host) {
+        raw_inp_host->TakeFocus();
+    }
 
     screen.Loop(renderer);
 

@@ -18,6 +18,20 @@ import shutil
 import subprocess
 from typing import List, Optional
 
+# --- Patch emoji width for terminals like Kitty (fixing character offset desync) ---
+try:
+    import wcwidth
+    _orig_wcwidth = wcwidth.wcwidth
+    def _emoji_aware_wcwidth(c):
+        if len(c) > 0:
+            cp = ord(c[0])
+            if cp >= 0x1F000 or cp in [0x2699, 0x2705, 0x274C, 0x26A1]:
+                return 2
+        return _orig_wcwidth(c)
+    wcwidth.wcwidth = _emoji_aware_wcwidth
+except ImportError:
+    pass
+
 import prompt_toolkit.utils as pt_utils
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.current import get_app
@@ -54,6 +68,10 @@ def _emoji_aware_get_cwidth(string: str) -> int:
 pt_utils.get_cwidth = _emoji_aware_get_cwidth
 for _ch in ["🏗", "🏗️", "🎛", "🎛️", "🗑", "🗑️", "⚙️", "⚙"]:
     pt_utils._CHAR_SIZES_CACHE[_ch] = 2
+
+for mod_name, mod in list(sys.modules.items()):
+    if "prompt_toolkit" in mod_name and hasattr(mod, "get_cwidth"):
+        setattr(mod, "get_cwidth", _emoji_aware_get_cwidth)
 
 
 # --- Config & Defaults ---
