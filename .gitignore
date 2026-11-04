@@ -4,4 +4,4 @@ __pycache__/
 *.pyc
 cpp/build/
 golang/mqtt-tui
-
+NOTES.md
