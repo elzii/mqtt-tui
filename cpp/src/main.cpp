@@ -27,6 +27,13 @@
 
 using namespace ftxui;
 
+static inline std::string trim_str(const std::string& s) {
+    auto start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
 static std::string get_current_time_str() {
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
@@ -46,18 +53,24 @@ int main() {
     std::string port_val = "1883";
     int host_hist_idx = -1;
     int port_hist_idx = -1;
+    Component raw_inp_host;
+    Component raw_inp_port;
 
     // Subscribe Tab inputs
     std::string sub_topics_val = "#";
     std::string sub_port_val = "1883";
     int sub_topics_hist_idx = -1;
     int sub_port_hist_idx = -1;
+    Component raw_inp_sub_topics;
+    Component raw_inp_sub_port;
 
     // Publish Tab inputs
     std::string pub_topic_val = "test/topic";
     std::string pub_msg_val = "{\"timestamp\": 1793124973.167886, \"numeric\": 15, \"value\": 15}";
     int pub_topic_hist_idx = -1;
     int pub_msg_hist_idx = -1;
+    Component raw_inp_pub_topic;
+    Component raw_inp_pub_msg;
 
     // Config Tab content
     std::string config_val = "";
@@ -86,6 +99,31 @@ int main() {
         screen.PostEvent(Event::Custom);
     };
 
+    auto clear_logs = [&]() {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        log_lines.clear();
+        log_scroll = 0;
+        screen.PostEvent(Event::Custom);
+    };
+
+    auto do_beautify_logs = [&]() {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        std::ostringstream oss;
+        for (const auto& l : log_lines) {
+            oss << l << "\n";
+        }
+        std::string beautified = beautify_json(oss.str());
+        std::stringstream ss(beautified);
+        log_lines.clear();
+        std::string bline;
+        while (std::getline(ss, bline)) {
+            if (!bline.empty() && bline.back() == '\r') bline.pop_back();
+            log_lines.push_back(bline);
+        }
+        log_scroll = (int)log_lines.size();
+        screen.PostEvent(Event::Custom);
+    };
+
     // Subprocess tracking
     std::atomic<pid_t> broker_pid{-1};
     std::atomic<pid_t> sub_pid{-1};
@@ -99,31 +137,31 @@ int main() {
     };
 
     // Helper: Badge button options
-    auto make_badge_btn_option = []() {
+    auto make_badge_btn_option = [](Color bg_col = Color::RGB(128, 128, 128), Color fg_col = Color::RGB(28, 28, 28)) {
         ButtonOption opt;
-        opt.transform = [](const EntryState& s) {
+        opt.transform = [bg_col, fg_col](const EntryState& s) {
             auto elem = text(" " + s.label + " ");
             if (s.focused) {
-                return elem | bgcolor(Color::RGB(200, 200, 200)) | color(Color::Black) | bold;
+                return elem | bgcolor(Color::RGB(210, 210, 210)) | color(Color::Black) | bold;
             }
-            return elem | bgcolor(Color::RGB(128, 128, 128)) | color(Color::RGB(28, 28, 28)) | bold;
+            return elem | bgcolor(bg_col) | color(fg_col) | bold;
         };
         return opt;
     };
 
-    // Helper: Tab button options
+    // Helper: Tab button options (matching rounded border & height 3)
     auto make_tab_btn = [&](const std::string& label, int tab_id, Color active_col) {
         ButtonOption opt;
-        opt.transform = [&, tab_id, active_col](const EntryState& s) {
+        opt.transform = [&, label, tab_id, active_col](const EntryState& s) {
             bool is_active = (active_tab == tab_id);
             auto elem = text(" " + label + " ");
             if (is_active) {
-                return elem | bgcolor(active_col) | color(Color::Black) | bold;
+                return elem | bold | color(Color::Black) | bgcolor(active_col) | borderRounded | color(active_col);
             }
             if (s.focused) {
-                return elem | border | color(active_col) | bold;
+                return elem | bold | color(active_col) | borderRounded | color(active_col);
             }
-            return elem | border | color(Color::RGB(100, 100, 100));
+            return elem | color(Color::RGB(160, 160, 160)) | borderRounded | color(Color::RGB(80, 80, 80));
         };
         return Button(label, [&, tab_id] { active_tab = tab_id; }, opt);
     };
@@ -134,10 +172,11 @@ int main() {
     auto tab_cfg_btn = make_tab_btn("🎛️", 3, Color::RGB(255, 165, 2));
 
     // Inputs with history handler decorator
-    auto make_history_input = [&](std::string& val_ref, const std::string& placeholder, const std::string& field_name, int& hist_idx) {
+    auto make_history_input = [&](std::string& val_ref, const std::string& placeholder, const std::string& field_name, int& hist_idx, Component& raw_out) {
         InputOption opt;
         opt.placeholder = placeholder;
         auto inp = Input(&val_ref, opt);
+        raw_out = inp;
         return CatchEvent(inp, [&, field_name](Event event) {
             if (event == Event::ArrowUp) {
                 auto hist = mqtt_tui::load_history(field_name);
@@ -168,8 +207,8 @@ int main() {
     };
 
     // Connect Tab components
-    auto inp_host = make_history_input(host_val, "Host Address (DEFAULT = 127.0.0.1)", "host", host_hist_idx);
-    auto inp_port = make_history_input(port_val, "Port (DEFAULT = 1883|9001)", "port", port_hist_idx);
+    auto inp_host = make_history_input(host_val, "Host Address (DEFAULT = 127.0.0.1)", "host", host_hist_idx, raw_inp_host);
+    auto inp_port = make_history_input(port_val, "Port (DEFAULT = 1883|9001)", "port", port_hist_idx, raw_inp_port);
 
     auto btn_start_broker = Button("▶ Start Mosquitto", [&] {
         if (broker_pid != -1) {
@@ -230,10 +269,12 @@ int main() {
     }, make_badge_btn_option());
 
     auto btn_ping = Button("⚡ Check/Ping", [&] {
-        std::string h = host_val.empty() ? "127.0.0.1" : host_val;
+        std::string h = trim_str(host_val);
+        if (h.empty()) h = "127.0.0.1";
         int p = 1883;
         try {
-            if (!port_val.empty()) p = std::stoi(port_val);
+            std::string p_trimmed = trim_str(port_val);
+            if (!p_trimmed.empty()) p = std::stoi(p_trimmed);
         } catch (...) {}
 
         mqtt_tui::save_history("host", h);
@@ -250,7 +291,6 @@ int main() {
             serv_addr.sin_family = AF_INET;
             serv_addr.sin_port = htons(p);
 
-            // Set timeout
             struct timeval tv;
             tv.tv_sec = 2;
             tv.tv_usec = 0;
@@ -275,18 +315,13 @@ int main() {
         }).detach();
     }, make_badge_btn_option());
 
-    auto btn_clear = Button("🧹 Clear", [&] {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        log_lines.clear();
-        log_scroll = 0;
-        screen.PostEvent(Event::Custom);
-    }, make_badge_btn_option());
+    auto btn_connect_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
 
     // Subscribe Tab components
-    auto inp_sub_topics = make_history_input(sub_topics_val, "Topics (Comma Separated, DEFAULT = #)", "sub_topics", sub_topics_hist_idx);
-    auto inp_sub_port = make_history_input(sub_port_val, "Port (DEFAULT = 1883|9001)", "sub_port", sub_port_hist_idx);
+    auto inp_sub_topics = make_history_input(sub_topics_val, "Topics (Comma Separated, DEFAULT = #)", "sub_topics", sub_topics_hist_idx, raw_inp_sub_topics);
+    auto inp_sub_port = make_history_input(sub_port_val, "Port (DEFAULT = 1883|9001)", "sub_port", sub_port_hist_idx, raw_inp_sub_port);
 
-    auto btn_start_sub = Button("▶ Start Sub", [&] {
+    auto start_subscriber_func = [&] {
         if (sub_pid != -1) {
             append_log("[" + get_current_time_str() + "] Subscriber already active (PID " + std::to_string(sub_pid) + ")");
             return;
@@ -344,11 +379,12 @@ int main() {
             close(pipe_fd[1]);
             sub_pid = pid;
             append_log("[" + get_current_time_str() + "] Subscribed to [" + raw_topics + "] on " + h_str + ":" + p_str + " (PID " + std::to_string(pid) + ")");
+            screen.PostEvent(Event::Custom);
 
-            std::thread([pipe_fd, pid, &sub_pid, &append_log]() {
+            std::thread([pipe_fd, pid, &sub_pid, &append_log, &screen]() {
                 FILE* f = fdopen(pipe_fd[0], "r");
                 if (f) {
-                    char buf[2048];
+                    char buf[4096];
                     while (fgets(buf, sizeof(buf), f)) {
                         std::string line(buf);
                         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
@@ -362,41 +398,57 @@ int main() {
                 waitpid(pid, &status, 0);
                 sub_pid = -1;
                 append_log("[" + get_current_time_str() + "] mosquitto_sub exited.");
+                screen.PostEvent(Event::Custom);
             }).detach();
         }
-    }, make_badge_btn_option());
+    };
 
-    auto btn_stop_sub = Button("⏹ Stop Sub", [&] {
+    auto stop_subscriber_func = [&] {
         if (sub_pid != -1) {
             pid_t pid = sub_pid;
             kill(pid, SIGTERM);
             append_log("[" + get_current_time_str() + "] Sent SIGTERM to subscriber (PID " + std::to_string(pid) + ")");
+            sub_pid = -1;
+            screen.PostEvent(Event::Custom);
         } else {
             append_log("[" + get_current_time_str() + "] No subscriber process active.");
         }
-    }, make_badge_btn_option());
+    };
 
-    auto btn_beautify = Button("💋 Beautify JSON", [&] {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        std::ostringstream oss;
-        for (const auto& l : log_lines) {
-            oss << l << "\n";
+    ButtonOption opt_start_sub;
+    opt_start_sub.transform = [&](const EntryState& s) {
+        bool is_running = (sub_pid != -1);
+        std::string lbl = is_running ? " ● Subscribing " : " ▶ Start Sub ";
+        auto elem = text(lbl);
+        if (is_running) {
+            return elem | bgcolor(Color::RGB(46, 213, 115)) | color(Color::Black) | bold;
         }
-        std::string beautified = beautify_json(oss.str());
-        std::stringstream ss(beautified);
-        log_lines.clear();
-        std::string bline;
-        while (std::getline(ss, bline)) {
-            if (!bline.empty() && bline.back() == '\r') bline.pop_back();
-            log_lines.push_back(bline);
+        if (s.focused) {
+            return elem | bgcolor(Color::RGB(210, 210, 210)) | color(Color::Black) | bold;
         }
-        log_scroll = (int)log_lines.size();
-        screen.PostEvent(Event::Custom);
-    }, make_badge_btn_option());
+        return elem | bgcolor(Color::RGB(128, 128, 128)) | color(Color::RGB(28, 28, 28)) | bold;
+    };
+    auto btn_start_sub = Button("▶ Start Sub", start_subscriber_func, opt_start_sub);
+
+    ButtonOption opt_stop_sub;
+    opt_stop_sub.transform = [&](const EntryState& s) {
+        bool is_running = (sub_pid != -1);
+        auto elem = text(" ⏹ Stop Sub ");
+        if (is_running) {
+            if (s.focused) {
+                return elem | bgcolor(Color::RGB(255, 100, 100)) | color(Color::Black) | bold;
+            }
+            return elem | bgcolor(Color::RGB(230, 80, 80)) | color(Color::White) | bold;
+        }
+        return elem | bgcolor(Color::RGB(80, 80, 80)) | color(Color::RGB(150, 150, 150));
+    };
+    auto btn_stop_sub = Button("⏹ Stop Sub", stop_subscriber_func, opt_stop_sub);
+    auto btn_sub_beautify = Button("💋 Beautify JSON", do_beautify_logs, make_badge_btn_option());
+    auto btn_sub_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
 
     // Publish Tab components
-    auto inp_pub_topic = make_history_input(pub_topic_val, "Topic (DEFAULT = test/topic)", "pub_topic", pub_topic_hist_idx);
-    auto inp_pub_msg = make_history_input(pub_msg_val, "Message", "pub_message", pub_msg_hist_idx);
+    auto inp_pub_topic = make_history_input(pub_topic_val, "Topic (DEFAULT = test/topic)", "pub_topic", pub_topic_hist_idx, raw_inp_pub_topic);
+    auto inp_pub_msg = make_history_input(pub_msg_val, "Message", "pub_message", pub_msg_hist_idx, raw_inp_pub_msg);
 
     auto btn_publish = Button("🚀 Publish Now", [&] {
         std::string t = pub_topic_val.empty() ? "test/topic" : pub_topic_val;
@@ -417,6 +469,9 @@ int main() {
             }
         }).detach();
     }, make_badge_btn_option());
+
+    auto btn_pub_beautify = Button("💋 Beautify JSON", do_beautify_logs, make_badge_btn_option());
+    auto btn_pub_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
 
     // Config Tab components
     InputOption cfg_opt;
@@ -445,7 +500,9 @@ int main() {
         }
     }, make_badge_btn_option());
 
-    // Containers per tab
+    auto btn_cfg_clear = Button("🧹 Clear", clear_logs, make_badge_btn_option());
+
+    // Separate Containers per tab (Zero sharing of button components!)
     auto tab_connect_container = Container::Vertical({
         inp_host,
         inp_port,
@@ -453,7 +510,7 @@ int main() {
             btn_start_broker,
             btn_stop_broker,
             btn_ping,
-            btn_clear
+            btn_connect_clear
         })
     });
 
@@ -463,8 +520,8 @@ int main() {
         Container::Horizontal({
             btn_start_sub,
             btn_stop_sub,
-            btn_beautify,
-            btn_clear
+            btn_sub_beautify,
+            btn_sub_clear
         })
     });
 
@@ -473,8 +530,8 @@ int main() {
         inp_pub_msg,
         Container::Horizontal({
             btn_publish,
-            btn_beautify,
-            btn_clear
+            btn_pub_beautify,
+            btn_pub_clear
         })
     });
 
@@ -483,7 +540,7 @@ int main() {
         Container::Horizontal({
             btn_save_cfg,
             btn_reload_cfg,
-            btn_clear
+            btn_cfg_clear
         })
     });
 
@@ -504,21 +561,59 @@ int main() {
         tab_content_container
     });
 
-    // Custom CatchEvent for global shortcuts
+    // Custom CatchEvent for global shortcuts and Tab navigation
+    auto get_focus_chain = [&]() -> std::vector<Component> {
+        if (active_tab == 0) {
+            return { raw_inp_host, raw_inp_port, btn_start_broker, btn_stop_broker, btn_ping, btn_connect_clear, tab_connect_btn, tab_sub_btn, tab_pub_btn, tab_cfg_btn };
+        } else if (active_tab == 1) {
+            return { raw_inp_sub_topics, raw_inp_sub_port, btn_start_sub, btn_stop_sub, btn_sub_beautify, btn_sub_clear, tab_connect_btn, tab_sub_btn, tab_pub_btn, tab_cfg_btn };
+        } else if (active_tab == 2) {
+            return { raw_inp_pub_topic, raw_inp_pub_msg, btn_publish, btn_pub_beautify, btn_pub_clear, tab_connect_btn, tab_sub_btn, tab_pub_btn, tab_cfg_btn };
+        } else {
+            return { inp_config, btn_save_cfg, btn_reload_cfg, btn_cfg_clear, tab_connect_btn, tab_sub_btn, tab_pub_btn, tab_cfg_btn };
+        }
+    };
+
     auto root_component = CatchEvent(main_container, [&](Event event) {
-        if (event == Event::F1 || event == Event::Character('1')) {
+        if (event == Event::Tab) {
+            auto chain = get_focus_chain();
+            int current_idx = -1;
+            for (int i = 0; i < (int)chain.size(); ++i) {
+                if (chain[i]->Focused()) {
+                    current_idx = i;
+                    break;
+                }
+            }
+            int next_idx = (current_idx + 1) % chain.size();
+            chain[next_idx]->TakeFocus();
+            return true;
+        }
+        if (event == Event::TabReverse) {
+            auto chain = get_focus_chain();
+            int current_idx = 0;
+            for (int i = 0; i < (int)chain.size(); ++i) {
+                if (chain[i]->Focused()) {
+                    current_idx = i;
+                    break;
+                }
+            }
+            int prev_idx = (current_idx - 1 + (int)chain.size()) % chain.size();
+            chain[prev_idx]->TakeFocus();
+            return true;
+        }
+        if (event == Event::F1 || event == Event::Special("\x1bOP") || event == Event::Special("\x1b[11~") || event == Event::Special("\0331")) {
             active_tab = 0;
             return true;
         }
-        if (event == Event::F2 || event == Event::Character('2')) {
+        if (event == Event::F2 || event == Event::Special("\x1bOQ") || event == Event::Special("\x1b[12~") || event == Event::Special("\0332")) {
             active_tab = 1;
             return true;
         }
-        if (event == Event::F3 || event == Event::Character('3')) {
+        if (event == Event::F3 || event == Event::Special("\x1bOR") || event == Event::Special("\x1b[13~") || event == Event::Special("\0333")) {
             active_tab = 2;
             return true;
         }
-        if (event == Event::F4 || event == Event::Character('4')) {
+        if (event == Event::F4 || event == Event::Special("\x1bOS") || event == Event::Special("\x1b[14~") || event == Event::Special("\0334")) {
             active_tab = 3;
             return true;
         }
@@ -527,9 +622,7 @@ int main() {
             return true;
         }
         if (event == Event::Special({12})) { // Ctrl+L
-            std::lock_guard<std::mutex> lock(log_mutex);
-            log_lines.clear();
-            log_scroll = 0;
+            clear_logs();
             return true;
         }
         return false;
@@ -598,17 +691,23 @@ int main() {
                 })
             );
         } else if (active_tab == 3) {
+            // In Config tab, config editor expands (flex) to fill available space
             tab_elements.push_back(
                 hbox({
                     text("  🎛️  ") | bold,
-                    inp_config->Render() | border | size(HEIGHT, EQUAL, 7) | flex
+                    inp_config->Render() | border | flex
                 })
             );
         }
 
         // Logs Header Bar
         Elements log_action_btns;
+        std::string status_label = "";
+        Color status_color = Color::White;
+
         if (active_tab == 0) {
+            status_label = "● Broker: " + broker_status;
+            status_color = broker_status_color;
             log_action_btns = {
                 btn_start_broker->Render(),
                 separatorEmpty(),
@@ -616,39 +715,50 @@ int main() {
                 separatorEmpty(),
                 btn_ping->Render(),
                 separatorEmpty(),
-                btn_clear->Render()
+                btn_connect_clear->Render()
             };
         } else if (active_tab == 1) {
+            if (sub_pid != -1) {
+                status_label = "● Subscriber: Active (PID " + std::to_string(sub_pid) + ")";
+                status_color = Color::RGB(46, 213, 115);
+            } else {
+                status_label = "● Subscriber: Idle";
+                status_color = Color::RGB(180, 180, 180);
+            }
             log_action_btns = {
                 btn_start_sub->Render(),
                 separatorEmpty(),
                 btn_stop_sub->Render(),
                 separatorEmpty(),
-                btn_beautify->Render(),
+                btn_sub_beautify->Render(),
                 separatorEmpty(),
-                btn_clear->Render()
+                btn_sub_clear->Render()
             };
         } else if (active_tab == 2) {
+            status_label = "● Broker: " + broker_status;
+            status_color = broker_status_color;
             log_action_btns = {
                 btn_publish->Render(),
                 separatorEmpty(),
-                btn_beautify->Render(),
+                btn_pub_beautify->Render(),
                 separatorEmpty(),
-                btn_clear->Render()
+                btn_pub_clear->Render()
             };
         } else {
+            status_label = "● Config: " + mqtt_tui::get_config_file_path();
+            status_color = Color::RGB(255, 165, 2);
             log_action_btns = {
                 btn_save_cfg->Render(),
                 separatorEmpty(),
                 btn_reload_cfg->Render(),
                 separatorEmpty(),
-                btn_clear->Render()
+                btn_cfg_clear->Render()
             };
         }
 
         auto logs_header = hbox({
             text(" 📝 Logs ") | bold,
-            text("  ● Broker: " + broker_status + " ") | color(broker_status_color),
+            text("  " + status_label + " ") | color(status_color),
             filler(),
             hbox(std::move(log_action_btns)),
             text(" ")
@@ -658,9 +768,10 @@ int main() {
         Elements rendered_lines;
         {
             std::lock_guard<std::mutex> lock(log_mutex);
+            int max_visible = (active_tab == 3) ? 10 : 80;
             int start_idx = 0;
-            if ((int)log_lines.size() > 50) {
-                start_idx = (int)log_lines.size() - 50;
+            if ((int)log_lines.size() > max_visible) {
+                start_idx = (int)log_lines.size() - max_visible;
             }
             for (size_t i = start_idx; i < log_lines.size(); ++i) {
                 rendered_lines.push_back(text(log_lines[i]));
@@ -670,17 +781,31 @@ int main() {
             rendered_lines.push_back(text("(no logs yet)") | dim);
         }
 
-        auto logs_box = vbox(std::move(rendered_lines)) | frame | flex | border;
+        Element logs_box;
+        if (active_tab == 3) {
+            // In Config tab, log panel is much smaller (fixed height 5) at bottom!
+            logs_box = vbox(std::move(rendered_lines)) | frame | size(HEIGHT, EQUAL, 5) | border;
+        } else {
+            // In other tabs, logs box fills the remaining space
+            logs_box = vbox(std::move(rendered_lines)) | frame | flex | border;
+        }
 
         // Bottom status footer
         auto footer = hbox({
             text(" F1/1 Connect  F2/2 Subscribe  F3/3 Publish  F4/4 Config | Tab Next  Enter/F5 Action  Ctrl+L Clear  Ctrl+Q Quit") | dim
         });
 
+        Element tab_body;
+        if (active_tab == 3) {
+            tab_body = vbox(std::move(tab_elements)) | flex;
+        } else {
+            tab_body = vbox(std::move(tab_elements));
+        }
+
         return vbox({
             header,
             separatorEmpty(),
-            vbox(std::move(tab_elements)),
+            tab_body,
             separatorEmpty(),
             logs_header,
             logs_box,

@@ -13,6 +13,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ftxui)
 
+# Ensure FTXUI properly treats Miscellaneous Symbols and Pictographs (0x1F000 - 0x1FFFF) as width 2 in modern terminals
+set(FTXUI_STRING_CPP "${ftxui_SOURCE_DIR}/src/ftxui/screen/string.cpp")
+if (EXISTS "${FTXUI_STRING_CPP}")
+  file(READ "${FTXUI_STRING_CPP}" STRING_CPP_CONTENT)
+  string(FIND "${STRING_CPP_CONTENT}" "0x1F000" HAS_EMOJI_FIX)
+  if (HAS_EMOJI_FIX EQUAL -1)
+    string(REPLACE
+      "bool IsFullWidth(uint32_t ucs) {\n  if (ucs < 0x0300)  // Quick path: // NOLINT\n    return false;"
+      "bool IsFullWidth(uint32_t ucs) {\n  if (ucs < 0x0300)  // Quick path: // NOLINT\n    return false;\n  if (ucs >= 0x1F000 && ucs <= 0x1FFFF)\n    return true;"
+      STRING_CPP_CONTENT "${STRING_CPP_CONTENT}")
+    file(WRITE "${FTXUI_STRING_CPP}" "${STRING_CPP_CONTENT}")
+    message(STATUS "Applied emoji width fix to FTXUI string.cpp")
+  endif()
+endif()
+
 FetchContent_Declare(
   json
   GIT_REPOSITORY https://github.com/nlohmann/json

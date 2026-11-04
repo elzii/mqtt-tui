@@ -34,14 +34,32 @@ type FocusIndex int
 const (
 	FocusServerHost FocusIndex = iota
 	FocusServerPort
+	FocusServerBtnStart
+	FocusServerBtnStop
+	FocusServerBtnPing
+	FocusServerBtnClear
 	FocusServerLogs
+
 	FocusSubTopics
 	FocusSubPort
+	FocusSubBtnStart
+	FocusSubBtnStop
+	FocusSubBtnBeautify
+	FocusSubBtnClear
 	FocusSubLogs
+
 	FocusPubTopic
 	FocusPubMsg
+	FocusPubBtnPublish
+	FocusPubBtnBeautify
+	FocusPubBtnClear
 	FocusPubLogs
+
 	FocusConfigEditor
+	FocusConfigBtnSave
+	FocusConfigBtnTest
+	FocusConfigBtnReload
+	FocusConfigBtnClear
 	FocusConfigLogs
 )
 
@@ -280,33 +298,67 @@ func (m *model) setFocus(fi FocusIndex) {
 func (m *model) focusNext() {
 	switch m.tab {
 	case TabConnect:
-		if m.focusIndex == FocusServerHost {
+		switch m.focusIndex {
+		case FocusServerHost:
 			m.setFocus(FocusServerPort)
-		} else if m.focusIndex == FocusServerPort {
+		case FocusServerPort:
+			m.setFocus(FocusServerBtnStart)
+		case FocusServerBtnStart:
+			m.setFocus(FocusServerBtnStop)
+		case FocusServerBtnStop:
+			m.setFocus(FocusServerBtnPing)
+		case FocusServerBtnPing:
+			m.setFocus(FocusServerBtnClear)
+		case FocusServerBtnClear:
 			m.setFocus(FocusServerLogs)
-		} else {
+		default:
 			m.setFocus(FocusServerHost)
 		}
 	case TabSubscribe:
-		if m.focusIndex == FocusSubTopics {
+		switch m.focusIndex {
+		case FocusSubTopics:
 			m.setFocus(FocusSubPort)
-		} else if m.focusIndex == FocusSubPort {
+		case FocusSubPort:
+			m.setFocus(FocusSubBtnStart)
+		case FocusSubBtnStart:
+			m.setFocus(FocusSubBtnStop)
+		case FocusSubBtnStop:
+			m.setFocus(FocusSubBtnBeautify)
+		case FocusSubBtnBeautify:
+			m.setFocus(FocusSubBtnClear)
+		case FocusSubBtnClear:
 			m.setFocus(FocusSubLogs)
-		} else {
+		default:
 			m.setFocus(FocusSubTopics)
 		}
 	case TabPublish:
-		if m.focusIndex == FocusPubTopic {
+		switch m.focusIndex {
+		case FocusPubTopic:
 			m.setFocus(FocusPubMsg)
-		} else if m.focusIndex == FocusPubMsg {
+		case FocusPubMsg:
+			m.setFocus(FocusPubBtnPublish)
+		case FocusPubBtnPublish:
+			m.setFocus(FocusPubBtnBeautify)
+		case FocusPubBtnBeautify:
+			m.setFocus(FocusPubBtnClear)
+		case FocusPubBtnClear:
 			m.setFocus(FocusPubLogs)
-		} else {
+		default:
 			m.setFocus(FocusPubTopic)
 		}
 	case TabConfig:
-		if m.focusIndex == FocusConfigEditor {
+		switch m.focusIndex {
+		case FocusConfigEditor:
+			m.setFocus(FocusConfigBtnSave)
+		case FocusConfigBtnSave:
+			m.setFocus(FocusConfigBtnTest)
+		case FocusConfigBtnTest:
+			m.setFocus(FocusConfigBtnReload)
+		case FocusConfigBtnReload:
+			m.setFocus(FocusConfigBtnClear)
+		case FocusConfigBtnClear:
 			m.setFocus(FocusConfigLogs)
-		} else {
+		default:
 			m.setFocus(FocusConfigEditor)
 		}
 	}
@@ -315,33 +367,67 @@ func (m *model) focusNext() {
 func (m *model) focusPrev() {
 	switch m.tab {
 	case TabConnect:
-		if m.focusIndex == FocusServerLogs {
+		switch m.focusIndex {
+		case FocusServerLogs:
+			m.setFocus(FocusServerBtnClear)
+		case FocusServerBtnClear:
+			m.setFocus(FocusServerBtnPing)
+		case FocusServerBtnPing:
+			m.setFocus(FocusServerBtnStop)
+		case FocusServerBtnStop:
+			m.setFocus(FocusServerBtnStart)
+		case FocusServerBtnStart:
 			m.setFocus(FocusServerPort)
-		} else if m.focusIndex == FocusServerPort {
+		case FocusServerPort:
 			m.setFocus(FocusServerHost)
-		} else {
+		default:
 			m.setFocus(FocusServerLogs)
 		}
 	case TabSubscribe:
-		if m.focusIndex == FocusSubLogs {
+		switch m.focusIndex {
+		case FocusSubLogs:
+			m.setFocus(FocusSubBtnClear)
+		case FocusSubBtnClear:
+			m.setFocus(FocusSubBtnBeautify)
+		case FocusSubBtnBeautify:
+			m.setFocus(FocusSubBtnStop)
+		case FocusSubBtnStop:
+			m.setFocus(FocusSubBtnStart)
+		case FocusSubBtnStart:
 			m.setFocus(FocusSubPort)
-		} else if m.focusIndex == FocusSubPort {
+		case FocusSubPort:
 			m.setFocus(FocusSubTopics)
-		} else {
+		default:
 			m.setFocus(FocusSubLogs)
 		}
 	case TabPublish:
-		if m.focusIndex == FocusPubLogs {
+		switch m.focusIndex {
+		case FocusPubLogs:
+			m.setFocus(FocusPubBtnClear)
+		case FocusPubBtnClear:
+			m.setFocus(FocusPubBtnBeautify)
+		case FocusPubBtnBeautify:
+			m.setFocus(FocusPubBtnPublish)
+		case FocusPubBtnPublish:
 			m.setFocus(FocusPubMsg)
-		} else if m.focusIndex == FocusPubMsg {
+		case FocusPubMsg:
 			m.setFocus(FocusPubTopic)
-		} else {
+		default:
 			m.setFocus(FocusPubLogs)
 		}
 	case TabConfig:
-		if m.focusIndex == FocusConfigLogs {
+		switch m.focusIndex {
+		case FocusConfigLogs:
+			m.setFocus(FocusConfigBtnClear)
+		case FocusConfigBtnClear:
+			m.setFocus(FocusConfigBtnReload)
+		case FocusConfigBtnReload:
+			m.setFocus(FocusConfigBtnTest)
+		case FocusConfigBtnTest:
+			m.setFocus(FocusConfigBtnSave)
+		case FocusConfigBtnSave:
 			m.setFocus(FocusConfigEditor)
-		} else {
+		default:
 			m.setFocus(FocusConfigLogs)
 		}
 	}
@@ -707,16 +793,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.configEditor.SetHeight(msg.Height - 18)
 
 	case tea.MouseMsg:
-		// Mouse tab click detection
-		if msg.Action == tea.MouseActionRelease && msg.Y == 0 {
-			if msg.X >= 40 && msg.X <= 52 {
-				m.switchTab(TabConnect)
-			} else if msg.X >= 55 && msg.X <= 69 {
-				m.switchTab(TabSubscribe)
-			} else if msg.X >= 72 && msg.X <= 84 {
-				m.switchTab(TabPublish)
-			} else if msg.X >= 86 && msg.X <= 94 {
-				m.switchTab(TabConfig)
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			switch m.tab {
+			case TabConnect:
+				m.serverVp.LineUp(2)
+			case TabSubscribe:
+				m.subVp.LineUp(2)
+			case TabPublish:
+				m.pubVp.LineUp(2)
+			case TabConfig:
+				m.configVp.LineUp(2)
+			}
+		case tea.MouseWheelDown:
+			switch m.tab {
+			case TabConnect:
+				m.serverVp.LineDown(2)
+			case TabSubscribe:
+				m.subVp.LineDown(2)
+			case TabPublish:
+				m.pubVp.LineDown(2)
+			case TabConfig:
+				m.configVp.LineDown(2)
+			}
+		case tea.MouseRelease:
+			if msg.Y == 0 {
+				// Calculate approximate tab offsets based on width
+				if msg.X >= m.width-45 && msg.X < m.width-32 {
+					m.switchTab(TabConnect)
+				} else if msg.X >= m.width-32 && msg.X < m.width-18 {
+					m.switchTab(TabSubscribe)
+				} else if msg.X >= m.width-18 && msg.X < m.width-8 {
+					m.switchTab(TabPublish)
+				} else if msg.X >= m.width-8 {
+					m.switchTab(TabConfig)
+				}
 			}
 		}
 
@@ -780,6 +891,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "f5", "enter":
+			// If focus is on a button, trigger that button's action
+			switch m.focusIndex {
+			case FocusServerBtnStart, FocusServerBtnStop:
+				m.toggleBroker()
+				return m, nil
+			case FocusServerBtnPing:
+				m.pingBroker()
+				return m, nil
+			case FocusServerBtnClear:
+				m.serverLogs = ""
+				m.serverVp.SetContent("")
+				return m, nil
+			case FocusSubBtnStart, FocusSubBtnStop:
+				m.toggleSubscribe()
+				return m, nil
+			case FocusSubBtnBeautify:
+				m.beautify(TabSubscribe)
+				return m, nil
+			case FocusSubBtnClear:
+				m.subLogs = ""
+				m.subVp.SetContent("")
+				return m, nil
+			case FocusPubBtnPublish:
+				m.publishMessage()
+				return m, nil
+			case FocusPubBtnBeautify:
+				m.beautify(TabPublish)
+				return m, nil
+			case FocusPubBtnClear:
+				m.pubLogs = ""
+				m.pubVp.SetContent("")
+				return m, nil
+			case FocusConfigBtnSave:
+				m.saveConfig()
+				return m, nil
+			case FocusConfigBtnTest:
+				m.testConfig()
+				return m, nil
+			case FocusConfigBtnReload:
+				m.reloadConfig()
+				return m, nil
+			case FocusConfigBtnClear:
+				m.configLogs = ""
+				m.configVp.SetContent("")
+				return m, nil
+			}
+
+			// Defaults if not on a button
 			if m.tab == TabConnect {
 				m.toggleBroker()
 				return m, nil
@@ -912,6 +1071,13 @@ func (m model) renderTopBar() string {
 	return styleTopBar.Width(m.width).Render(bar)
 }
 
+func (m model) renderBadge(label string, focused bool) string {
+	if focused {
+		return lipgloss.NewStyle().Background(lipgloss.Color("#ffffff")).Foreground(lipgloss.Color("#000000")).Bold(true).Render(label)
+	}
+	return styleBadge.Render(label)
+}
+
 func (m model) renderBox(content string, focused bool) string {
 	boxWidth := m.width - 9
 	if boxWidth < 20 {
@@ -941,9 +1107,9 @@ func (m model) View() string {
 		}
 
 		hdr := styleLogHdr.Render("  📝 Logs") + "      " + statusBadge + "   " +
-			styleBadge.Render(actBtnText) + "  " +
-			styleBadge.Render(" ⚡ Check/Ping ") + "  " +
-			styleBadge.Render(" 🧹 Clear ")
+			m.renderBadge(actBtnText, m.focusIndex == FocusServerBtnStart || m.focusIndex == FocusServerBtnStop) + "  " +
+			m.renderBadge(" ⚡ Check/Ping ", m.focusIndex == FocusServerBtnPing) + "  " +
+			m.renderBadge(" 🧹 Clear ", m.focusIndex == FocusServerBtnClear)
 		hdrLine := styleLogHdr.Width(m.width).Render(hdr)
 
 		vpBox := styleBoxNormal.Width(m.width - 2).Height(m.serverVp.Height).Render(m.serverVp.View())
@@ -961,9 +1127,9 @@ func (m model) View() string {
 		}
 
 		hdr := styleLogHdr.Render("  📝 Logs") + "      " + statusBadge + "   " +
-			styleBadge.Render(actBtnText) + "  " +
-			styleBadge.Render(" 💋 Beautify JSON ") + "  " +
-			styleBadge.Render(" 🧹 Clear ")
+			m.renderBadge(actBtnText, m.focusIndex == FocusSubBtnStart || m.focusIndex == FocusSubBtnStop) + "  " +
+			m.renderBadge(" 💋 Beautify JSON ", m.focusIndex == FocusSubBtnBeautify) + "  " +
+			m.renderBadge(" 🧹 Clear ", m.focusIndex == FocusSubBtnClear)
 		hdrLine := styleLogHdr.Width(m.width).Render(hdr)
 
 		vpBox := styleBoxNormal.Width(m.width - 2).Height(m.subVp.Height).Render(m.subVp.View())
@@ -974,10 +1140,9 @@ func (m model) View() string {
 		row2 := lipgloss.JoinHorizontal(lipgloss.Top, "  💬  ", m.renderBox(m.pubMsgInput.View(), m.focusIndex == FocusPubMsg))
 
 		hdr := styleLogHdr.Render("  📝 Logs") + "      " +
-			styleBadge.Render(" 🚀 Publish ") + "  " +
-			styleBadge.Render(" 🗑️ Clear Message ") + "  " +
-			styleBadge.Render(" 💋 Beautify JSON ") + "  " +
-			styleBadge.Render(" 🧹 Clear Logs ")
+			m.renderBadge(" 🚀 Publish Now ", m.focusIndex == FocusPubBtnPublish) + "  " +
+			m.renderBadge(" 💋 Beautify JSON ", m.focusIndex == FocusPubBtnBeautify) + "  " +
+			m.renderBadge(" 🧹 Clear Logs ", m.focusIndex == FocusPubBtnClear)
 		hdrLine := styleLogHdr.Width(m.width).Render(hdr)
 
 		vpBox := styleBoxNormal.Width(m.width - 2).Height(m.pubVp.Height).Render(m.pubVp.View())
@@ -985,15 +1150,15 @@ func (m model) View() string {
 
 	case TabConfig:
 		toolbar := "  🎛️  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d6e5")).Render(fmt.Sprintf("Config: %s", m.configPath)) + "    " +
-			styleBadge.Render(" 💾 Save Config ") + "  " +
-			styleBadge.Render(" 🧪 Test Config ") + "  " +
-			styleBadge.Render(" 🔄 Reload ")
+			m.renderBadge(" 💾 Save Config ", m.focusIndex == FocusConfigBtnSave) + "  " +
+			m.renderBadge(" 🧪 Test Config ", m.focusIndex == FocusConfigBtnTest) + "  " +
+			m.renderBadge(" 🔄 Reload ", m.focusIndex == FocusConfigBtnReload)
 		tbLine := styleTopBar.Width(m.width).Render(toolbar)
 
 		editorBox := styleBoxNormal.Width(m.width - 2).Render(m.configEditor.View())
 
 		hdr := styleLogHdr.Render("  📝 Validation & Status Logs") + "      " +
-			styleBadge.Render(" 🧹 Clear ")
+			m.renderBadge(" 🧹 Clear ", m.focusIndex == FocusConfigBtnClear)
 		hdrLine := styleLogHdr.Width(m.width).Render(hdr)
 
 		vpBox := styleBoxNormal.Width(m.width - 2).Height(m.configVp.Height).Render(m.configVp.View())
@@ -1022,7 +1187,6 @@ func main() {
 	p := tea.NewProgram(
 		initialModel(),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	if _, err := p.Run(); err != nil {
