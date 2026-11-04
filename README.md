@@ -16,8 +16,8 @@ The interface replicates the multi-tab layout for Mosquitto tools, featuring ada
 - **Host Address**: Defaults to `127.0.0.1`.
 - **Port**: Defaults to `1883` (standard TCP) or `9001` (WebSockets).
 - **Broker Management**:
-  - `[ ▶ Start Mosquitto ]` / `[ ⏹ Stop Broker ]`: Launches or stops `mosquitto -c ~/.config/mosquitto/mosquitto.tui.conf -v` in the background with real-time log streaming.
-  - `[ ⚡ Check/Ping ]`: Tests TCP reachability and inspects broker information via `$SYS/broker/version`.
+  - `▶ Start Mosquitto` / `⏹ Stop Broker`: Launches or stops `mosquitto -c ~/.config/mosquitto/mosquitto.tui.conf -v` in the background with real-time log streaming.
+  - `⚡ Check/Ping`: Tests TCP reachability and inspects broker information via `$SYS/broker/version`.
 - **Logs Panel**: Displays streaming server logs, connection attempts, and PID status.
 
 ### 2. `[ Subscribe ]` (`mosquitto_sub`)
@@ -25,12 +25,12 @@ The interface replicates the multi-tab layout for Mosquitto tools, featuring ada
   - *Multi-topic experimental hack*: Automatically splits comma-separated entries into multiple `-t <topic>` flags for `mosquitto_sub`.
 - **Port**: Configurable port (defaults to `1883` or `9001` with `--ws`).
 - **Subscription Controls**:
-  - `[ ▶ Start Subscribe ]` / `[ ⏹ Stop Subscribe ]`: Spawns `mosquitto_sub -v` as an asynchronous subprocess.
+  - `▶ Start Subscribe` / `⏹ Stop Subscribe`: Spawns `mosquitto_sub -v` as an asynchronous subprocess.
 - **Logs Panel**: Live message stream with topic and payload output.
 
 ### 3. `[ Publish ]` (`mosquitto_pub`)
 - **Topic**: Destination topic(s). Supports comma-separated topics for broadcasting the payload to multiple topics in sequence.
-- **Message**: Multiline payload text area. Press `Enter` for newlines; press `Enter` on the single-line input or `F5` / click `[ 🚀 Publish ]` to dispatch.
+- **Message**: Multiline payload text area. Press `Enter` for newlines; press `Enter` on the single-line input or `F5` / click `🚀 Publish` to dispatch.
 - **Publish Execution**: Invokes `mosquitto_pub` with proper flags and WebSocket support (`--ws` when port `9001`).
 - **Logs Panel**: Confirms published messages, byte counts, and delivery exit codes.
 
@@ -38,9 +38,9 @@ The interface replicates the multi-tab layout for Mosquitto tools, featuring ada
 - Dedicated configuration manager for `~/.config/mosquitto/mosquitto.tui.conf`.
 - **Integrated Editor**: Scrollable text editor with line numbers.
 - **Toolbar Actions**:
-  - `[ 💾 Save Config (Ctrl+S) ]`: Writes edits back to `~/.config/mosquitto/mosquitto.tui.conf`.
-  - `[ 🧪 Test Config (Ctrl+T) ]`: Executes `mosquitto --test-config -c ~/.config/mosquitto/mosquitto.tui.conf` to validate syntax before running.
-  - `[ 🔄 Reload (Ctrl+R) ]`: Reloads configuration from disk.
+  - `💾 Save Config`: Writes edits back to `~/.config/mosquitto/mosquitto.tui.conf`.
+  - `🧪 Test Config`: Executes `mosquitto --test-config -c ~/.config/mosquitto/mosquitto.tui.conf` to validate syntax before running.
+  - `🔄 Reload`: Reloads configuration from disk.
 - **Validation Logs**: Displays syntax check results and configuration diagnostics.
 
 ---

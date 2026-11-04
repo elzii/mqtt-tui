@@ -111,12 +111,9 @@ THEME_STYLE = Style.from_dict({
     "placeholder.title": "#c8d6e5",
     "placeholder.default": "#636e72 italic",
 
-    # Action buttons
-    "btn": "bg:#2f3542 #f1f2f6",
-    "btn.primary": "bg:#1e90ff #ffffff bold",
-    "btn.success": "bg:#2ed573 #0c1c14 bold",
-    "btn.danger": "bg:#ff4757 #ffffff bold",
-    "btn.warning": "bg:#ffa502 #1e1200 bold",
+    # Action buttons (ANSI 244 bg: #808080, ANSI 234 fg: #1c1c1c)
+    "btn.badge": "bg:#808080 #1c1c1c bold",
+    "btn": "bg:#808080 #1c1c1c bold",
 
     # Logs header and area
     "logs.header": "bg:#383e4a #f1f2f6 bold",
@@ -347,15 +344,15 @@ class MqttTuiApp:
 
     # --- View 1: Connect / Server ---
     def _build_connect_view(self):
-        # Row 1: Host Address with centered 🔗 🔗 icon
+        # Row 1: Host Address with centered 🔗 icon
         row_host = VSplit([
-            Window(FormattedTextControl("\n  🔗 🔗\n"), width=Dimension.exact(8), height=Dimension.exact(3), style="class:icon"),
+            Window(FormattedTextControl("\n  🔗  \n"), width=Dimension.exact(6), height=Dimension.exact(3), style="class:icon"),
             Frame(self.server_host_input, height=Dimension.exact(3), style="class:input-frame"),
         ])
 
         # Row 2: Port with centered 🏗️ icon
         row_port = VSplit([
-            Window(FormattedTextControl("\n  🏗️   \n"), width=Dimension.exact(8), height=Dimension.exact(3), style="class:icon"),
+            Window(FormattedTextControl("\n  🏗️  \n"), width=Dimension.exact(6), height=Dimension.exact(3), style="class:icon"),
             Frame(self.server_port_input, height=Dimension.exact(3), style="class:input-frame"),
         ])
 
@@ -367,18 +364,18 @@ class MqttTuiApp:
 
             status_text = "● Broker: Running" if self.server_proc else "● Broker: Idle/External"
             status_cls = "class:logs.status.running" if self.server_proc else "class:logs.status.idle"
-            action_btn_text = "[ ⏹ Stop Broker ]" if self.server_proc else "[ ▶ Start Mosquitto ]"
+            action_btn_text = "⏹ Stop Broker" if self.server_proc else "▶ Start Mosquitto"
 
             return [
                 ("class:logs.header", "  📝 Logs"),
-                ("class:logs.header", " " * 8),
+                ("class:logs.header", " " * 6),
                 (status_cls, status_text),
                 ("class:logs.header", "   "),
-                ("class:btn.success" if not self.server_proc else "class:btn.danger", f" {action_btn_text} ", h_run),
+                ("class:btn.badge", f" {action_btn_text} ", h_run),
                 ("class:logs.header", "  "),
-                ("class:btn.primary", " [ ⚡ Check/Ping ] ", h_ping),
+                ("class:btn.badge", " ⚡ Check/Ping ", h_ping),
                 ("class:logs.header", "  "),
-                ("class:btn", " [ 🧹 Clear ] ", h_clear),
+                ("class:btn.badge", " 🧹 Clear ", h_clear),
             ]
 
         logs_header = Window(
@@ -402,13 +399,13 @@ class MqttTuiApp:
     def _build_subscribe_view(self):
         # Row 1: Topics (Comma separated)
         row_topics = VSplit([
-            Window(FormattedTextControl("\n  💬   \n"), width=Dimension.exact(8), height=Dimension.exact(3), style="class:icon"),
+            Window(FormattedTextControl("\n  💬  \n"), width=Dimension.exact(6), height=Dimension.exact(3), style="class:icon"),
             Frame(self.sub_topics_input, height=Dimension.exact(3), style="class:input-frame"),
         ])
 
         # Row 2: Port
         row_port = VSplit([
-            Window(FormattedTextControl("\n  🏗️   \n"), width=Dimension.exact(8), height=Dimension.exact(3), style="class:icon"),
+            Window(FormattedTextControl("\n  🏗️  \n"), width=Dimension.exact(6), height=Dimension.exact(3), style="class:icon"),
             Frame(self.sub_port_input, height=Dimension.exact(3), style="class:input-frame"),
         ])
 
@@ -419,16 +416,16 @@ class MqttTuiApp:
 
             status_text = "● Subscribing (Active)" if self.sub_proc else "● Inactive"
             status_cls = "class:logs.status.running" if self.sub_proc else "class:logs.status.idle"
-            btn_text = "[ ⏹ Stop Subscribe ]" if self.sub_proc else "[ ▶ Start Subscribe ]"
+            btn_text = "⏹ Stop Subscribe" if self.sub_proc else "▶ Start Subscribe"
 
             return [
                 ("class:logs.header", "  📝 Logs"),
-                ("class:logs.header", " " * 8),
+                ("class:logs.header", " " * 6),
                 (status_cls, status_text),
                 ("class:logs.header", "   "),
-                ("class:btn.success" if not self.sub_proc else "class:btn.danger", f" {btn_text} ", h_sub),
+                ("class:btn.badge", f" {btn_text} ", h_sub),
                 ("class:logs.header", "  "),
-                ("class:btn", " [ 🧹 Clear ] ", h_clear),
+                ("class:btn.badge", " 🧹 Clear ", h_clear),
             ]
 
         logs_header = Window(
@@ -452,13 +449,13 @@ class MqttTuiApp:
     def _build_publish_view(self):
         # Row 1: Topic
         row_topic = VSplit([
-            Window(FormattedTextControl("\n  💬   \n"), width=Dimension.exact(8), height=Dimension.exact(3), style="class:icon"),
+            Window(FormattedTextControl("\n  💬  \n"), width=Dimension.exact(6), height=Dimension.exact(3), style="class:icon"),
             Frame(self.pub_topic_input, height=Dimension.exact(3), style="class:input-frame"),
         ])
 
         # Row 2: Message (multiline)
         row_msg = VSplit([
-            Window(FormattedTextControl("\n  💬   \n"), width=Dimension.exact(8), style="class:icon"),
+            Window(FormattedTextControl("\n  💬  \n"), width=Dimension.exact(6), style="class:icon"),
             Frame(self.pub_msg_input, style="class:input-frame"),
         ])
 
@@ -470,12 +467,12 @@ class MqttTuiApp:
 
             return [
                 ("class:logs.header", "  📝 Logs"),
-                ("class:logs.header", " " * 8),
-                ("class:btn.primary", " [ 🚀 Publish (Enter/F5) ] ", h_pub),
+                ("class:logs.header", " " * 6),
+                ("class:btn.badge", " 🚀 Publish ", h_pub),
                 ("class:logs.header", "  "),
-                ("class:btn", " [ 🗑️ Clear Message ] ", h_clear_msg),
+                ("class:btn.badge", " 🗑️ Clear Message ", h_clear_msg),
                 ("class:logs.header", "  "),
-                ("class:btn", " [ 🧹 Clear Logs ] ", h_clear_logs),
+                ("class:btn.badge", " 🧹 Clear Logs ", h_clear_logs),
             ]
 
         logs_header = Window(
@@ -489,6 +486,7 @@ class MqttTuiApp:
         return HSplit([
             Window(height=1),
             row_topic,
+            Window(height=1),
             row_msg,
             Window(height=1),
             logs_header,
@@ -506,11 +504,11 @@ class MqttTuiApp:
                 ("class:icon", "  🎛️  "),
                 ("class:placeholder.title", f"Config: {self.conf_path}"),
                 ("class:topbar", "    "),
-                ("class:btn.primary", " [ 💾 Save Config (Ctrl+S) ] ", h_save),
+                ("class:btn.badge", " 💾 Save Config ", h_save),
                 ("class:topbar", "  "),
-                ("class:btn.warning", " [ 🧪 Test Config (Ctrl+T) ] ", h_test),
+                ("class:btn.badge", " 🧪 Test Config ", h_test),
                 ("class:topbar", "  "),
-                ("class:btn", " [ 🔄 Reload (Ctrl+R) ] ", h_reload),
+                ("class:btn.badge", " 🔄 Reload ", h_reload),
             ]
 
         toolbar = Window(
@@ -525,8 +523,8 @@ class MqttTuiApp:
             h_clear = self._make_mouse_click_handler(lambda: self.clear_log(self.config_logs))
             return [
                 ("class:logs.header", "  📝 Validation & Status Logs"),
-                ("class:logs.header", " " * 8),
-                ("class:btn", " [ 🧹 Clear ] ", h_clear),
+                ("class:logs.header", " " * 6),
+                ("class:btn.badge", " 🧹 Clear ", h_clear),
             ]
 
         logs_header = Window(
